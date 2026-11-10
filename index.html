@@ -14,7 +14,7 @@
   button.rec { background:var(--tap); border:none; font-weight:700; }
   label { font-size:14px; color:#AAB3CF; display:flex; align-items:center; gap:6px; }
   #wrap { position:fixed; top:64px; bottom:0; left:0; right:0; overflow:hidden; }
-  #script { position:absolute; left:0; right:0; padding:45vh 8vw 60vh; font-size:var(--fs,54px); line-height:1.5; font-weight:600; text-align:center; }
+  #script { position:absolute; left:0; right:0; top:0; will-change:transform; padding:45vh 8vw 60vh; font-size:var(--fs,54px); line-height:1.5; font-weight:600; text-align:center; }
   #script p { margin:0 0 1.2em; }
   #script p.mark { font-size:.62em; padding:.6em .8em; border-radius:16px; margin:1.6em 0; }
   #script p.start { background:var(--tap); color:#fff; }
@@ -99,20 +99,20 @@ const speed = document.getElementById("speed"), size = document.getElementById("
 size.oninput = () => document.documentElement.style.setProperty("--fs", size.value + "px");
 document.getElementById("mirror").onchange = (e) => document.body.classList.toggle("mirror", e.target.checked);
 function frame(ts) {
-  if (playing) { y += (ts - last) / 1000 * speed.value * 1.6; box.style.top = -y + "px"; }
+  if (playing) { y += (ts - last) / 1000 * speed.value * 1.6; box.style.transform = "translate3d(0," + (-y) + "px,0)"; }
   last = ts; requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
 const play = document.getElementById("play");
 function toggle() { playing = !playing; play.textContent = playing ? "❚❚ Pause" : "▶ Start"; keepAwake(playing); }
 play.onclick = toggle;
-document.getElementById("reset").onclick = () => { y = 0; box.style.top = "0px"; };
+document.getElementById("reset").onclick = () => { y = 0; box.style.transform = "translate3d(0,0,0)"; };
 document.addEventListener("keydown", (e) => {
   if (e.code === "Space") { e.preventDefault(); toggle(); }
   if (e.code === "ArrowUp") y = Math.max(0, y - 60);
   if (e.code === "ArrowDown") y += 60;
 });
-document.getElementById("wrap").addEventListener("wheel", (e) => { y = Math.max(0, y + e.deltaY * 0.5); box.style.top = -y + "px"; });
+document.getElementById("wrap").addEventListener("wheel", (e) => { y = Math.max(0, y + e.deltaY * 0.5); box.style.transform = "translate3d(0," + (-y) + "px,0)"; });
 
 // Tap the text to start/pause; drag to scroll (phone).
 const isPhone = matchMedia("(max-width: 760px)").matches || "ontouchstart" in window;
@@ -120,7 +120,7 @@ if (isPhone) { size.value = 34; document.documentElement.style.setProperty("--fs
 let touchY = null, moved = false;
 const wrapEl = document.getElementById("wrap");
 wrapEl.addEventListener("touchstart", (e) => { touchY = e.touches[0].clientY; moved = false; }, { passive: true });
-wrapEl.addEventListener("touchmove", (e) => { const ny = e.touches[0].clientY; if (Math.abs(ny - touchY) > 4) moved = true; y = Math.max(0, y + (touchY - ny)); touchY = ny; box.style.top = -y + "px"; }, { passive: true });
+wrapEl.addEventListener("touchmove", (e) => { const ny = e.touches[0].clientY; if (Math.abs(ny - touchY) > 4) moved = true; y = Math.max(0, y + (touchY - ny)); touchY = ny; box.style.transform = "translate3d(0," + (-y) + "px,0)"; }, { passive: true });
 wrapEl.addEventListener("touchend", () => { if (!moved) toggle(); });
 // Keep the screen on while reading
 let lock = null;
@@ -132,8 +132,8 @@ let stream = null, rec = null, chunks = [], t0 = 0, timer = null;
 const cam = document.getElementById("cam"), recBtn = document.getElementById("recBtn"), msg = document.getElementById("msg");
 document.getElementById("camBtn").onclick = async () => {
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ video: isPhone ? { facingMode: "user", width: { ideal: 1080 }, height: { ideal: 1920 }, frameRate: { ideal: 30 } } : { width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
-    cam.srcObject = stream; cam.classList.add("on"); recBtn.disabled = false; msg.textContent = "Camera ready";
+    stream = await navigator.mediaDevices.getUserMedia({ video: isPhone ? { facingMode: "user", width: { ideal: 720 }, height: { ideal: 1280 }, frameRate: { ideal: 30, max: 30 } } : { width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+    cam.srcObject = stream; cam.classList.add("on"); stream.getVideoTracks().forEach((t) => { t.onmute = () => { msg.textContent = "⚠️ Camera നിന്നുപോയി. Stop ചെയ്ത് വീണ്ടും Camera അമർത്തുക."; }; t.onended = t.onmute; }); recBtn.disabled = false; msg.textContent = "Camera ready";
   } catch (e) { msg.textContent = "Camera തുറക്കാൻ പറ്റിയില്ല: " + e.message; }
 };
 recBtn.onclick = async () => {
@@ -143,7 +143,7 @@ recBtn.onclick = async () => {
   c.style.display = "none";
   const type = ["video/mp4;codecs=avc1,mp4a", "video/mp4", "video/webm;codecs=vp9,opus", "video/webm"].find((t) => MediaRecorder.isTypeSupported(t)) || "";
   const ext = type.startsWith("video/mp4") ? "mp4" : "webm";
-  chunks = []; rec = new MediaRecorder(stream, type ? { mimeType: type, videoBitsPerSecond: 8000000 } : { videoBitsPerSecond: 8000000 });
+  chunks = []; rec = new MediaRecorder(stream, type ? { mimeType: type, videoBitsPerSecond: isPhone ? 4000000 : 8000000 } : { videoBitsPerSecond: isPhone ? 4000000 : 8000000 });
   rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
   rec.onstop = () => {
     clearInterval(timer); document.getElementById("recdot").classList.remove("on"); recBtn.textContent = "● Record";
@@ -151,7 +151,7 @@ recBtn.onclick = async () => {
     a.download = "zebu-take-" + new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-") + "." + ext; a.click();
     msg.textContent = "Downloads-ൽ save ആയി. ആ file raw folder-ലേക്ക് മാറ്റൂ."; if (playing) toggle();
   };
-  rec.start(1000); t0 = Date.now(); recBtn.textContent = "■ Stop";
+  if (isPhone) rec.start(); else rec.start(1000); t0 = Date.now(); recBtn.textContent = "■ Stop";
   document.getElementById("recdot").classList.add("on");
   timer = setInterval(() => { const s = Math.floor((Date.now() - t0) / 1000); document.getElementById("rect").textContent = Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); }, 250);
   if (!playing) toggle();
