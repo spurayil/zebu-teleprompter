@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="ml">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zebu Teleprompter</title>
+<style>
+  :root { --bg:#0B0F1A; --accent:#C6FF3D; --tap:#FF4D8D; --text:#F5F7FF; --muted:#2A3350; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--text); font-family: "Segoe UI", "Nirmala UI", "Kartika", sans-serif; }
+  #bar { position:fixed; top:0; left:0; right:0; display:flex; flex-wrap:wrap; gap:10px; align-items:center; padding:10px 16px; background:#111827; z-index:5; }
+  button, select { font:inherit; font-size:16px; padding:8px 14px; border-radius:10px; border:1px solid #3A4568; background:#1B2238; color:var(--text); cursor:pointer; }
+  button.main { background:var(--accent); color:#0B0F1A; border:none; font-weight:700; }
+  button.rec { background:var(--tap); border:none; font-weight:700; }
+  label { font-size:14px; color:#AAB3CF; display:flex; align-items:center; gap:6px; }
+  #wrap { position:fixed; top:64px; bottom:0; left:0; right:0; overflow:hidden; }
+  #script { position:absolute; left:0; right:0; padding:45vh 8vw 60vh; font-size:var(--fs,54px); line-height:1.5; font-weight:600; text-align:center; }
+  #script p { margin:0 0 1.2em; }
+  #script p.mark { font-size:.62em; padding:.6em .8em; border-radius:16px; margin:1.6em 0; }
+  #script p.start { background:var(--tap); color:#fff; }
+  #script p.stop { background:var(--accent); color:#0B0F1A; }
+  #script p.how { font-size:.45em; color:#AAB3CF; border:1px dashed #3A4568; border-radius:12px; padding:.8em; }
+  #script p .tag { display:block; font-size:.38em; letter-spacing:3px; color:var(--accent); margin-bottom:.3em; font-family:"Segoe UI",sans-serif; }
+  #guide { position:fixed; left:0; right:0; top:calc(64px + 38vh); height:2px; background:rgba(198,255,61,.5); pointer-events:none; z-index:4; }
+  .mirror #script { transform: scaleX(-1); }
+  #cam { position:fixed; right:16px; bottom:16px; width:220px; border-radius:14px; border:3px solid var(--muted); z-index:6; display:none; transform:scaleX(-1); }
+  #cam.on { display:block; }
+  #recdot { display:none; color:var(--tap); font-weight:700; }
+  #recdot.on { display:inline; }
+  #count { position:fixed; inset:0; display:none; align-items:center; justify-content:center; font-size:30vh; font-weight:800; color:var(--accent); background:rgba(11,15,26,.7); z-index:10; }
+  #msg { font-size:14px; color:#AAB3CF; }
+  /* phone: text near the front camera, small preview, compact bar */
+  @media (max-width: 760px) {
+    #bar { gap:6px; padding:6px 8px; }
+    button { font-size:14px; padding:7px 10px; }
+    label { font-size:12px; } label input[type=range] { width:80px; }
+    #script { padding:14vh 5vw 70vh; }
+    #guide { top:calc(var(--barh,96px) + 12vh); }
+    #cam { width:96px; right:8px; bottom:8px; border-width:2px; }
+  }
+</style>
+</head>
+<body>
+<div id="bar">
+  <button class="main" id="play">▶ Start</button>
+  <button id="reset">⟲ Top</button>
+  <label>വേഗം <input id="speed" type="range" min="10" max="120" value="38"></label>
+  <label>വലുപ്പം <input id="size" type="range" min="30" max="96" value="54"></label>
+  <label><input id="mirror" type="checkbox"> Mirror</label>
+  <button id="camBtn">📷 Camera</button>
+  <button class="rec" id="recBtn" disabled>● Record</button>
+  <span id="recdot">● REC <span id="rect">0:00</span></span>
+  <span id="msg"></span>
+</div>
+<div id="guide"></div>
+<div id="wrap"><div id="script"></div></div>
+<video id="cam" autoplay muted playsinline></video>
+<div id="count"></div>
+<script>
+const LINES = [
+  ["HOW", "3 സ്ഥലം = 3 വീഡിയോ. ഓരോ വീഡിയോയും START-ൽ record തുടങ്ങി STOP-ൽ നിർത്തുക. ഓരോ വരിയും 2 തവണ പറയുക, ഓരോന്നിനും ശേഷം 2 second നിർത്തുക. തെറ്റിയാൽ നിർത്തേണ്ട, ആ വരി വീണ്ടും പറഞ്ഞാൽ മതി. പച്ച STOP വരുമ്പോൾ scroll നിർത്തുക (laptop: Space, phone: text-ൽ tap). സ്ഥലം മാറിയ ശേഷം വീണ്ടും tap."],
+  ["START", "🔴 വീഡിയോ 1 · മുറിയിൽ · ഡ്രസ്സ് 1 · ഇപ്പോൾ phone-ൽ RECORD അമർത്തുക · ഒരു കൈയടി 👏"],
+  ["Reel 2 · Hook A · energy കൂട്ടി", "ഞാൻ എന്റെ reels ഒന്നും edit ചെയ്യുന്നില്ല. ഒരു AI skill ആണ് എല്ലാം ചെയ്യുന്നത്!"],
+  ["Reel 2 · Hook B", "ഒരു topic പറഞ്ഞാൽ മതി, reel റെഡി! Editing ഇല്ല, software ഇല്ല."],
+  ["Reel 2 · Hook C", "ഈ reel ഞാൻ edit ചെയ്തതല്ല. ഒരു AI ആണ് ഇത് ഉണ്ടാക്കിയത്!"],
+  ["Reel 2 · അവസാനം · ചിരിച്ചുകൊണ്ട്", "എന്റെ reels ഉണ്ടാക്കുന്ന ഈ skill വേണോ? താഴെ SKILL എന്ന് comment ചെയ്യൂ, ഞാൻ link അയച്ചു തരാം!"],
+  ["Reel 3 · Hook · ആവേശത്തോടെ", "നിങ്ങളുടെ exam notes-ന്റെ PDF കൊടുത്താൽ, AI അത് ഒരു മലയാളം podcast ആക്കി തരും!"],
+  ["Reel 4 · Hook A · ഉറപ്പോടെ", "Best AI ഏതാണെന്ന് ചോദിച്ചാൽ, എന്റെ ഉത്തരം: അങ്ങനെ ഒന്നില്ല!"],
+  ["Reel 4 · Hook B", "ChatGPT, Gemini, Claude: students-ന് ഏതാണ് നല്ലത്? എന്റെ സത്യസന്ധമായ അഭിപ്രായം പറയാം."],
+  ["Reel 4 · Hook C", "AI ഉപയോഗിക്കുന്നവരിൽ പകുതിയും ChatGPT ആണ്. പക്ഷേ എല്ലാ ജോലിക്കും അതല്ല നല്ലത്."],
+  ["Reel 4 · അവസാനം · camera-യിൽ നോക്കി", "ഏത് ജോലിക്ക് ഏത് AI എന്നതിന്റെ cheat sheet വേണോ? AI എന്ന് comment ചെയ്യൂ. കാരണം, best AI എന്നൊന്നില്ല."],
+  ["STOP", "⏹ വീഡിയോ 1 STOP · recording നിർത്തുക · ഇനി സ്ഥലവും ഡ്രസ്സും മാറ്റുക"],
+  ["START", "🔴 വീഡിയോ 2 · പുറത്ത് അല്ലെങ്കിൽ മറ്റൊരു മുറി · ഡ്രസ്സ് 2 · RECORD അമർത്തുക · കൈയടി 👏"],
+  ["എല്ലാ reels-നും", "ഒരു കിടിലൻ AI trick പറയട്ടെ?"],
+  ["എല്ലാ reels-നും", "ഇത് അറിയാത്തവർ ഇപ്പോഴും മണിക്കൂറുകൾ കളയുകയാണ്!"],
+  ["എല്ലാ reels-നും", "ഇത് നിങ്ങൾ ഇന്ന് തന്നെ try ചെയ്യൂ!"],
+  ["എല്ലാ reels-നും", "ഇത് save ചെയ്തു വെക്കൂ, പിന്നീട് ആവശ്യം വരും."],
+  ["keyword പറയേണ്ട, അത് screen-ൽ വരും", "താഴെ കാണുന്ന വാക്ക് comment ചെയ്യൂ, ഞാൻ DM-ൽ അയച്ചു തരാം!"],
+  ["എല്ലാ reels-നും", "ഇതുപോലുള്ള AI tips-ന്, എന്റെ ചാനൽ follow ചെയ്യൂ."],
+  ["ചോദ്യം പോലെ", "നിങ്ങൾ ഇത് try ചെയ്തോ? Comment-ൽ പറയൂ."],
+  ["എല്ലാ reels-നും", "ഇത് ആവശ്യമുള്ള ഒരു friend-ന് അയച്ചു കൊടുക്കൂ."],
+  ["ഒന്നും പറയേണ്ട", "3 second ചിരിച്ച് camera-യിൽ നോക്കുക → 3 second മുകളിലേക്ക് ചൂണ്ടുക ☝️ → 3 second താഴേക്ക് ചൂണ്ടുക 👇 → തലയാട്ടുക"],
+  ["STOP", "⏹ വീഡിയോ 2 STOP · recording നിർത്തുക · ഇനി സ്ഥലവും ഡ്രസ്സും മാറ്റുക"],
+  ["START", "🔴 വീഡിയോ 3 · കാർ / café / വാതിൽക്കൽ · ഡ്രസ്സ് 3 · RECORD അമർത്തുക · കൈയടി 👏"],
+  ["എല്ലാ reels-നും", "ഒരു കിടിലൻ AI trick പറയട്ടെ?"],
+  ["എല്ലാ reels-നും", "ഇത് നിങ്ങൾ ഇന്ന് തന്നെ try ചെയ്യൂ!"],
+  ["keyword പറയേണ്ട", "താഴെ കാണുന്ന വാക്ക് comment ചെയ്യൂ, ഞാൻ DM-ൽ അയച്ചു തരാം!"],
+  ["എല്ലാ reels-നും", "ഇതുപോലുള്ള AI tips-ന്, എന്റെ ചാനൽ follow ചെയ്യൂ."],
+  ["ഒന്നും പറയേണ്ട", "3 second ചിരി → മുകളിലേക്ക് ചൂണ്ടുക ☝️ → താഴേക്ക് ചൂണ്ടുക 👇"],
+  ["വേണമെങ്കിൽ മാത്രം · പുതിയ voice-ന് · energy-യോടെ", "ഹായ് ഫ്രണ്ട്സ്! ഞാൻ Zebu. ഈ ചാനലിൽ ഞാൻ AI tools-നെ കുറിച്ച്, നമ്മുടെ സ്വന്തം മലയാളത്തിൽ, simple ആയി പറഞ്ഞു തരുന്നു. Students-നും ജോലി അന്വേഷിക്കുന്നവർക്കും ഒരുപാട് സമയം ലാഭിക്കാൻ പറ്റുന്ന ചെറിയ tricks ഉണ്ട്. അപ്പോൾ, പുതിയ AI tricks അറിയണമെങ്കിൽ, കൂടെ നിൽക്കൂ. എല്ലാവർക്കും നന്ദി."],
+  ["STOP", "⏹ വീഡിയോ 3 STOP · കഴിഞ്ഞു! ✅ 3 വീഡിയോകളും raw folder-ൽ ഇട്ട് Claude-നോട് done എന്ന് പറയൂ"]
+];
+const fitBar = () => { const h = document.getElementById("bar").offsetHeight; document.getElementById("wrap").style.top = h + "px"; document.getElementById("guide").style.top = (h + innerHeight * 0.38) + "px"; };
+addEventListener("resize", fitBar); setTimeout(fitBar, 0);
+const box = document.getElementById("script");
+box.innerHTML = LINES.map(([t, s]) => (t === "START" || t === "STOP") ? `<p class="mark ${t.toLowerCase()}">${s}</p>` : t === "HOW" ? `<p class="how">${s}</p>` : `<p><span class="tag">${t}</span>${s}</p>`).join("");
+let y = 0, playing = false, last = 0;
+const speed = document.getElementById("speed"), size = document.getElementById("size");
+size.oninput = () => document.documentElement.style.setProperty("--fs", size.value + "px");
+document.getElementById("mirror").onchange = (e) => document.body.classList.toggle("mirror", e.target.checked);
+function frame(ts) {
+  if (playing) { y += (ts - last) / 1000 * speed.value * 1.6; box.style.top = -y + "px"; }
+  last = ts; requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+const play = document.getElementById("play");
+function toggle() { playing = !playing; play.textContent = playing ? "❚❚ Pause" : "▶ Start"; keepAwake(playing); }
+play.onclick = toggle;
+document.getElementById("reset").onclick = () => { y = 0; box.style.top = "0px"; };
+document.addEventListener("keydown", (e) => {
+  if (e.code === "Space") { e.preventDefault(); toggle(); }
+  if (e.code === "ArrowUp") y = Math.max(0, y - 60);
+  if (e.code === "ArrowDown") y += 60;
+});
+document.getElementById("wrap").addEventListener("wheel", (e) => { y = Math.max(0, y + e.deltaY * 0.5); box.style.top = -y + "px"; });
+
+// Tap the text to start/pause; drag to scroll (phone).
+const isPhone = matchMedia("(max-width: 760px)").matches || "ontouchstart" in window;
+if (isPhone) { size.value = 34; document.documentElement.style.setProperty("--fs", "34px"); speed.value = 30; }
+let touchY = null, moved = false;
+const wrapEl = document.getElementById("wrap");
+wrapEl.addEventListener("touchstart", (e) => { touchY = e.touches[0].clientY; moved = false; }, { passive: true });
+wrapEl.addEventListener("touchmove", (e) => { const ny = e.touches[0].clientY; if (Math.abs(ny - touchY) > 4) moved = true; y = Math.max(0, y + (touchY - ny)); touchY = ny; box.style.top = -y + "px"; }, { passive: true });
+wrapEl.addEventListener("touchend", () => { if (!moved) toggle(); });
+// Keep the screen on while reading
+let lock = null;
+async function keepAwake(on) { try { if (on && "wakeLock" in navigator) lock = await navigator.wakeLock.request("screen"); else if (lock) { await lock.release(); lock = null; } } catch (e) {} }
+const fitBar2 = () => document.documentElement.style.setProperty("--barh", document.getElementById("bar").offsetHeight + "px");
+addEventListener("resize", fitBar2); setTimeout(fitBar2, 0);
+// Record with this device's camera (phone: front camera, vertical).
+let stream = null, rec = null, chunks = [], t0 = 0, timer = null;
+const cam = document.getElementById("cam"), recBtn = document.getElementById("recBtn"), msg = document.getElementById("msg");
+document.getElementById("camBtn").onclick = async () => {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: isPhone ? { facingMode: "user", width: { ideal: 1080 }, height: { ideal: 1920 }, frameRate: { ideal: 30 } } : { width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+    cam.srcObject = stream; cam.classList.add("on"); recBtn.disabled = false; msg.textContent = "Camera ready";
+  } catch (e) { msg.textContent = "Camera തുറക്കാൻ പറ്റിയില്ല: " + e.message; }
+};
+recBtn.onclick = async () => {
+  if (rec && rec.state === "recording") { rec.stop(); return; }
+  const c = document.getElementById("count"); c.style.display = "flex";
+  for (const n of [3, 2, 1]) { c.textContent = n; await new Promise((r) => setTimeout(r, 800)); }
+  c.style.display = "none";
+  const type = ["video/mp4;codecs=avc1,mp4a", "video/mp4", "video/webm;codecs=vp9,opus", "video/webm"].find((t) => MediaRecorder.isTypeSupported(t)) || "";
+  const ext = type.startsWith("video/mp4") ? "mp4" : "webm";
+  chunks = []; rec = new MediaRecorder(stream, type ? { mimeType: type, videoBitsPerSecond: 8000000 } : { videoBitsPerSecond: 8000000 });
+  rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+  rec.onstop = () => {
+    clearInterval(timer); document.getElementById("recdot").classList.remove("on"); recBtn.textContent = "● Record";
+    const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob(chunks, { type: type || "video/webm" }));
+    a.download = "zebu-take-" + new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-") + "." + ext; a.click();
+    msg.textContent = "Downloads-ൽ save ആയി. ആ file raw folder-ലേക്ക് മാറ്റൂ."; if (playing) toggle();
+  };
+  rec.start(1000); t0 = Date.now(); recBtn.textContent = "■ Stop";
+  document.getElementById("recdot").classList.add("on");
+  timer = setInterval(() => { const s = Math.floor((Date.now() - t0) / 1000); document.getElementById("rect").textContent = Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); }, 250);
+  if (!playing) toggle();
+};
+</script>
+</body>
+</html>
