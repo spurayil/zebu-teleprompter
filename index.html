@@ -29,6 +29,24 @@
   #recdot.on { display:inline; }
   #count { position:fixed; inset:0; display:none; align-items:center; justify-content:center; font-size:30vh; font-weight:800; color:var(--accent); background:rgba(11,15,26,.7); z-index:10; }
   #msg { font-size:14px; color:#AAB3CF; }
+  button.look { background:#3DD6FF; color:#0B0F1A; border:none; font-weight:700; }
+  /* Look mode: read one line, then the text hides so the eyes go to the camera lens */
+  #look { position:fixed; inset:0; background:#05070C; z-index:20; display:none; flex-direction:column; align-items:center; justify-content:flex-start; padding:5vh 7vw 0; text-align:center; }
+  #look.on { display:flex; }
+  #lk-top { width:100%; display:flex; justify-content:space-between; font-size:15px; color:#8A93B2; }
+  #lk-top button { font-size:14px; padding:6px 12px; }
+  #lk-tag { margin-top:2vh; font-size:16px; letter-spacing:3px; color:var(--accent); min-height:1.4em; }
+  #lk-line { margin-top:1.5vh; font-size:var(--lfs,52px); line-height:1.45; font-weight:700; max-width:1100px; transition:opacity .25s; }
+  #lk-cue { display:none; flex-direction:column; align-items:center; gap:2vh; margin-top:1vh; }
+  #lk-cue .arrow { font-size:16vh; line-height:1; animation:bob 1s ease-in-out infinite; }
+  #lk-cue .say { font-size:5.5vh; font-weight:800; color:var(--accent); }
+  #lk-cue .take { font-size:2.6vh; color:#AAB3CF; }
+  @keyframes bob { 50% { transform:translateY(-2vh); } }
+  #lk-bar { position:fixed; left:0; bottom:0; height:10px; background:var(--accent); width:0; }
+  #lk-help { position:fixed; bottom:22px; left:0; right:0; font-size:14px; color:#8A93B2; }
+  @media (max-height: 620px) { #lk-help { display:none; } }
+  #look.mark #lk-line { background:var(--tap); padding:.5em .8em; border-radius:18px; font-size:calc(var(--lfs,52px)*.7); }
+  #look.mark.stop #lk-line { background:var(--accent); color:#0B0F1A; }
   /* phone: text near the front camera, small preview, compact bar */
   @media (max-width: 760px) {
     #bar { gap:6px; padding:6px 8px; }
@@ -44,6 +62,7 @@
 <div id="bar">
   <button class="main" id="play">▶ Start</button>
   <button id="reset">⟲ Top</button>
+  <button class="look" id="lookBtn">👁 Look mode</button>
   <label>വേഗം <input id="speed" type="range" min="10" max="120" value="38"></label>
   <label>വലുപ്പം <input id="size" type="range" min="30" max="96" value="54"></label>
   <label><input id="mirror" type="checkbox"> Mirror</label>
@@ -56,6 +75,14 @@
 <div id="wrap"><div id="script"></div></div>
 <video id="cam" autoplay muted playsinline></video>
 <div id="count"></div>
+<div id="look">
+  <div id="lk-top"><span id="lk-pos"></span><span><button id="lk-pause">❚❚</button> <button id="lk-exit">✕ Exit</button></span></div>
+  <div id="lk-tag"></div>
+  <div id="lk-line"></div>
+  <div id="lk-cue"><div class="arrow">👆</div><div class="say">ക്യാമറയിൽ നോക്കി പറയൂ</div><div class="take" id="lk-take"></div></div>
+  <div id="lk-help">Tap / Space = pause · → അടുത്ത വരി · ← തിരിച്ച് · START/STOP-ൽ tap ചെയ്താൽ മുന്നോട്ട്</div>
+  <div id="lk-bar"></div>
+</div>
 <script>
 const LINES = [
   ["HOW", "3 സ്ഥലം = 3 വീഡിയോ. ഓരോ വീഡിയോയും START-ൽ record തുടങ്ങി STOP-ൽ നിർത്തുക. ഓരോ വരിയും 2 തവണ പറയുക, ഓരോന്നിനും ശേഷം 2 second നിർത്തുക. തെറ്റിയാൽ നിർത്തേണ്ട, ആ വരി വീണ്ടും പറഞ്ഞാൽ മതി. പച്ച STOP വരുമ്പോൾ scroll നിർത്തുക (laptop: Space, phone: text-ൽ tap). സ്ഥലം മാറിയ ശേഷം വീണ്ടും tap."],
@@ -113,6 +140,64 @@ document.addEventListener("keydown", (e) => {
   if (e.code === "ArrowDown") y += 60;
 });
 document.getElementById("wrap").addEventListener("wheel", (e) => { y = Math.max(0, y + e.deltaY * 0.5); box.style.transform = "translate3d(0," + (-y) + "px,0)"; });
+
+// ---- Look mode: READ the line (text visible) -> text hides, arrow points at the lens -> SAY it looking at the camera.
+// Each line twice (2 takes). Works with any camera: put this screen just below the lens.
+const LK = LINES.filter(([t]) => t !== "HOW");
+const lk = { i: 0, take: 1, phase: "read", t0: 0, dur: 0, paused: false, on: false };
+const $ = (id) => document.getElementById(id);
+const readTime = (s) => Math.max(2.5, s.length * 0.055);   // seconds to read the line
+const sayTime = (s) => Math.max(3, s.length * 0.085 + 1.2);  // seconds to say it + a breath
+function lkShow() {
+  const [t, s] = LK[lk.i]; const mark = t === "START" || t === "STOP";
+  $("look").className = "on" + (mark ? " mark " + t.toLowerCase() : "");
+  $("lk-pos").textContent = `${lk.i + 1} / ${LK.length}` + (mark ? "" : ` · take ${lk.take}/2`);
+  $("lk-tag").textContent = mark ? "" : t;
+  $("lk-line").textContent = s; $("lk-line").style.opacity = 1; $("lk-line").style.display = "block";
+  $("lk-cue").style.display = "none";
+  lk.phase = mark ? "wait" : "read"; lk.t0 = performance.now(); lk.dur = mark ? 0 : readTime(s);
+}
+function lkSay() {
+  const s = LK[lk.i][1];
+  $("lk-line").style.display = "none"; $("lk-tag").textContent = "";
+  $("lk-take").textContent = `take ${lk.take}/2 · ` + (lk.take === 1 ? "energy-യോടെ" : "ഒന്നുകൂടി, ചിരിച്ചുകൊണ്ട്");
+  $("lk-cue").style.display = "flex";
+  lk.phase = "say"; lk.t0 = performance.now(); lk.dur = sayTime(s);
+}
+function lkNext(step = 1) {
+  if (step > 0 && lk.take === 1 && !["START", "STOP"].includes(LK[lk.i][0]) && lk.phase !== "jump") { lk.take = 2; lkShow(); return; }
+  lk.take = 1; lk.i = Math.min(LK.length - 1, Math.max(0, lk.i + step)); lkShow();
+}
+function lkTick(ts) {
+  if (lk.on && !lk.paused && lk.dur) {
+    const p = (ts - lk.t0) / 1000 / lk.dur;
+    $("lk-bar").style.width = Math.min(100, p * 100) + "%";
+    $("lk-bar").style.background = lk.phase === "read" ? "#3DD6FF" : "var(--accent)";
+    if (p >= 1) { if (lk.phase === "read") lkSay(); else if (lk.phase === "say") lkNext(1); }
+  } else if (lk.on && lk.phase === "wait") $("lk-bar").style.width = "0";
+  requestAnimationFrame(lkTick);
+}
+requestAnimationFrame(lkTick);
+function lkPause() {
+  if (lk.phase === "wait") { lkNext(1); return; }
+  lk.paused = !lk.paused; $("lk-pause").textContent = lk.paused ? "▶" : "❚❚";
+  if (!lk.paused) lk.t0 = performance.now() - (parseFloat($("lk-bar").style.width) || 0) / 100 * lk.dur * 1000;
+}
+$("lookBtn").onclick = () => {
+  lk.on = true; lk.paused = false; if (playing) toggle();
+  document.documentElement.style.setProperty("--lfs", (isPhone ? 30 : Math.round(size.value * 1.1)) + "px");
+  lkShow(); keepAwake(true); try { document.documentElement.requestFullscreen(); } catch (e) {}
+};
+$("lk-exit").onclick = (e) => { e.stopPropagation(); lk.on = false; $("look").className = ""; keepAwake(false); try { document.exitFullscreen(); } catch (e) {} };
+$("lk-pause").onclick = (e) => { e.stopPropagation(); lkPause(); };
+$("look").addEventListener("click", lkPause);
+document.addEventListener("keydown", (e) => {
+  if (!lk.on) return;
+  if (e.code === "Space") { e.preventDefault(); e.stopImmediatePropagation(); lkPause(); }
+  if (e.code === "ArrowRight") { lk.phase = "jump"; lkNext(1); }
+  if (e.code === "ArrowLeft") { lk.phase = "jump"; lkNext(-1); }
+  if (e.code === "Escape") $("lk-exit").click();
+}, true);
 
 // Tap the text to start/pause; drag to scroll (phone).
 const isPhone = matchMedia("(max-width: 760px)").matches || "ontouchstart" in window;
